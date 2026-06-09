@@ -37,8 +37,8 @@ The `databases/v6/` layout is preserved so the relative `path` inside
 | `EGRESS_PROXY` *(CI)* | — | — | forward proxy for the anchore fetch; exported to `HTTPS_PROXY` inside the job |
 | `NO_PROXY` | — | — | internal hosts that must bypass the proxy (Artifactory) |
 | `GRYPE_DB_SOURCE_URL` | — | `https://grype.anchore.io/databases/v6/latest.json` | upstream listing (see source modes) |
-| `GRYPE_DB_SOURCE_AUTH` | — | `0` | `1` = send Artifactory auth on the source fetch (mode B) |
-| `GRYPE_DB_SUBPATH` | — | `databases/v6` | path inside the repo |
+| `GRYPE_DB_SOURCE_AUTH` | — | `auto` | `auto` / `true` / `false`. `auto` = authenticate the source fetch only when its host equals `ARTIFACTORY_URL`. Normally leave unset. |
+| `GRYPE_DB_SUBPATH` | — | *derived* | defaults to `databases/<version>` parsed from the source URL (e.g. `databases/v6`). Set only to force a non-standard layout. |
 | `DRY_RUN` | — | `0` | `1` = download + verify, no upload |
 
 ### Source modes
@@ -70,13 +70,14 @@ ARTIFACTORY_REPO=grype-db-local                     # the LOCAL repo to publish 
 ARTIFACTORY_USER=svc-grype                          # ← replace
 ARTIFACTORY_TOKEN=your-artifactory-token            # ← replace
 GRYPE_DB_SOURCE_URL=https://artifactory.example.com/artifactory/grype-db-remote/v6/latest.json   # ← replace HOST only
-GRYPE_DB_SOURCE_AUTH=1                               # log in to the source with the creds above
 ```
 
-In `GRYPE_DB_SOURCE_URL`, only the hostname is yours; `/artifactory`,
-`/grype-db-remote` (your remote repo name), and `/v6/latest.json` are literal.
-`GRYPE_DB_SOURCE_AUTH=1` makes the job send `ARTIFACTORY_USER`/`ARTIFACTORY_TOKEN`
-on that fetch — do **not** put credentials in the URL.
+That's the whole Mode B config — no extra flags. In `GRYPE_DB_SOURCE_URL`, only the
+hostname is yours; `/artifactory`, `/grype-db-remote` (your remote repo name), and
+`/v6/latest.json` are literal. Because the source host equals `ARTIFACTORY_URL`, the
+job **automatically** logs in to the source with `ARTIFACTORY_USER`/`ARTIFACTORY_TOKEN`
+(you don't put credentials in the URL, and you don't set any auth flag). The publish
+path is auto-derived as `databases/v6` from that URL.
 
 Requires `curl`, `jq`, and `sha256sum`/`shasum` on the runner.
 

@@ -23,12 +23,17 @@
 #   ARTIFACTORY_USER     required  upload user / service account
 #   ARTIFACTORY_TOKEN    required  password or access token (keep secret)
 #   GRYPE_DB_SOURCE_URL  optional  default https://grype.anchore.io/databases/v6/latest.json
-#   GRYPE_DB_SUBPATH     optional  default databases/v6
-#   GRYPE_DB_SOURCE_AUTH optional  set to 1 to send ARTIFACTORY_USER/TOKEN on the
-#                                  SOURCE fetch as well. Use when GRYPE_DB_SOURCE_URL
-#                                  points at your own Artifactory REMOTE repo, i.e.
-#                                  pull from grype-db-remote → push to grype-db-local
-#                                  so build agents never egress (only Artifactory does).
+#   GRYPE_DB_SUBPATH     optional  where to publish inside the repo. By DEFAULT this is
+#                                  derived from the source URL as databases/<version>
+#                                  (e.g. databases/v6); it auto-follows to v7 when you
+#                                  point the source at .../v7/latest.json. Set this only
+#                                  to force a non-standard layout.
+#   GRYPE_DB_SOURCE_AUTH optional  one of: auto (default) | true | false. Controls
+#                                  whether ARTIFACTORY_USER/TOKEN is sent on the SOURCE
+#                                  fetch. "auto" turns it on only when the source host
+#                                  is the same as ARTIFACTORY_URL — i.e. when you pull
+#                                  from your own grype-db-remote (remote→local promotion)
+#                                  so agents never egress. You normally never set this.
 #   DRY_RUN              optional  set to 1 to download+verify but skip upload
 #
 # Requires: curl, jq, and sha256sum (Linux) or shasum (macOS).
@@ -47,7 +52,26 @@ else echo "ERROR: need sha256sum or shasum" >&2; exit 3; fi
 : "${ARTIFACTORY_USER:?set ARTIFACTORY_USER}"
 : "${ARTIFACTORY_TOKEN:?set ARTIFACTORY_TOKEN}"
 SOURCE_URL="${GRYPE_DB_SOURCE_URL:-https://grype.anchore.io/databases/v6/latest.json}"
-SUBPATH="${GRYPE_DB_SUBPATH:-databases/v6}"
+
+# Default publish layout: databases/<version>, deriving <version> from the directory
+# that holds latest.json in the source URL (.../databases/v6/latest.json -> v6). This
+# auto-follows a future v7. Override only via GRYPE_DB_SUBPATH.
+_src_noquery="${SOURCE_URL%%\?*}"   # strip any ?query
+_src_dir="${_src_noquery%/*}"       # strip /latest.json
+_db_version="${_src_dir##*/}"       # last path segment, e.g. v6
+SUBPATH="${GRYPE_DB_SUBPATH:-databases/${_db_version}}"
+
+# Decide whether to authenticate the SOURCE fetch. Default "auto" = send Artifactory
+# creds only when the source host matches the destination Artifactory host (Mode B:
+# grype-db-remote -> grype-db-local). Accept only auto/true/false; reject anything else.
+_art_host="$(printf '%s' "${ARTIFACTORY_URL}" | awk -F/ '{print $3}')"
+_src_host="$(printf '%s' "${SOURCE_URL}"      | awk -F/ '{print $3}')"
+case "$(printf '%s' "${GRYPE_DB_SOURCE_AUTH:-auto}" | tr '[:upper:]' '[:lower:]')" in
+  auto)         if [ "${_src_host}" = "${_art_host}" ]; then SOURCE_AUTH=1; else SOURCE_AUTH=0; fi ;;
+  true|yes|on)  SOURCE_AUTH=1 ;;
+  false|no|off) SOURCE_AUTH=0 ;;
+  *) echo "ERROR: GRYPE_DB_SOURCE_AUTH must be 'auto', 'true', or 'false' (got: '${GRYPE_DB_SOURCE_AUTH}')" >&2; exit 2 ;;
+esac
 
 ART_BASE="${ARTIFACTORY_URL%/}/artifactory"
 DEST_DIR="${ART_BASE}/${ARTIFACTORY_REPO}/${SUBPATH}"
@@ -60,11 +84,10 @@ A=(-u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}")
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
-# Source fetches carry Artifactory auth only when GRYPE_DB_SOURCE_AUTH=1 — i.e.
-# the source is your own (authenticated) Artifactory remote repo, not the public
-# anchore CDN. Kept as a helper so it works on Bash 3.2 (no empty-array+set-u).
+# Source fetches carry Artifactory auth only when SOURCE_AUTH was resolved to 1
+# above. Kept as a helper so it works on Bash 3.2 (no empty-array under set -u).
 src_get() { # url outfile
-  if [ "${GRYPE_DB_SOURCE_AUTH:-0}" = "1" ]; then
+  if [ "${SOURCE_AUTH}" = "1" ]; then
     "${C[@]}" -f "${A[@]}" "$1" -o "$2"
   else
     "${C[@]}" -f "$1" -o "$2"
@@ -72,8 +95,9 @@ src_get() { # url outfile
 }
 
 log "Grype DB → Artifactory sync"
-log "  source: ${SOURCE_URL}"
-log "  dest:   ${DEST_DIR}/"
+log "  source:      ${SOURCE_URL}"
+log "  dest:        ${DEST_DIR}/"
+log "  source-auth: $([ "${SOURCE_AUTH}" = "1" ] && echo on || echo off)"
 
 # 1) Fetch the upstream listing (through the egress proxy, if set).
 src_get "${SOURCE_URL}" "${tmp}/latest.json"
