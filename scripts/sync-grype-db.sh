@@ -24,6 +24,11 @@
 #   ARTIFACTORY_TOKEN    required  password or access token (keep secret)
 #   GRYPE_DB_SOURCE_URL  optional  default https://grype.anchore.io/databases/v6/latest.json
 #   GRYPE_DB_SUBPATH     optional  default databases/v6
+#   GRYPE_DB_SOURCE_AUTH optional  set to 1 to send ARTIFACTORY_USER/TOKEN on the
+#                                  SOURCE fetch as well. Use when GRYPE_DB_SOURCE_URL
+#                                  points at your own Artifactory REMOTE repo, i.e.
+#                                  pull from grype-db-remote → push to grype-db-local
+#                                  so build agents never egress (only Artifactory does).
 #   DRY_RUN              optional  set to 1 to download+verify but skip upload
 #
 # Requires: curl, jq, and sha256sum (Linux) or shasum (macOS).
@@ -55,12 +60,23 @@ A=(-u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}")
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
+# Source fetches carry Artifactory auth only when GRYPE_DB_SOURCE_AUTH=1 — i.e.
+# the source is your own (authenticated) Artifactory remote repo, not the public
+# anchore CDN. Kept as a helper so it works on Bash 3.2 (no empty-array+set-u).
+src_get() { # url outfile
+  if [ "${GRYPE_DB_SOURCE_AUTH:-0}" = "1" ]; then
+    "${C[@]}" -f "${A[@]}" "$1" -o "$2"
+  else
+    "${C[@]}" -f "$1" -o "$2"
+  fi
+}
+
 log "Grype DB → Artifactory sync"
 log "  source: ${SOURCE_URL}"
 log "  dest:   ${DEST_DIR}/"
 
 # 1) Fetch the upstream listing (through the egress proxy, if set).
-"${C[@]}" -f "${SOURCE_URL}" -o "${tmp}/latest.json"
+src_get "${SOURCE_URL}" "${tmp}/latest.json"
 db_path="$(jq -r '.path' "${tmp}/latest.json")"
 want="$(jq -r '.checksum' "${tmp}/latest.json")"; want="${want#sha256:}"
 [ -n "${db_path}" ] && [ "${db_path}" != "null" ] || { echo "ERROR: listing has no .path" >&2; exit 1; }
@@ -78,7 +94,7 @@ fi
 
 # 3) Download the archive (through the egress proxy) and verify its checksum.
 log "→ downloading archive"
-"${C[@]}" -f "${SOURCE_URL%/*}/${db_path}" -o "${tmp}/${db_path}"
+src_get "${SOURCE_URL%/*}/${db_path}" "${tmp}/${db_path}"
 got="$(sha "${tmp}/${db_path}")"
 [ "${got}" = "${want}" ] || { echo "ERROR: checksum mismatch (want ${want}, got ${got})" >&2; exit 1; }
 log "✓ checksum verified"

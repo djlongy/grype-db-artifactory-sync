@@ -36,9 +36,21 @@ The `databases/v6/` layout is preserved so the relative `path` inside
 | `ARTIFACTORY_TOKEN` | ✅ | — | password or access token (secret) |
 | `EGRESS_PROXY` *(CI)* | — | — | forward proxy for the anchore fetch; exported to `HTTPS_PROXY` inside the job |
 | `NO_PROXY` | — | — | internal hosts that must bypass the proxy (Artifactory) |
-| `GRYPE_DB_SOURCE_URL` | — | `https://grype.anchore.io/databases/v6/latest.json` | upstream listing |
+| `GRYPE_DB_SOURCE_URL` | — | `https://grype.anchore.io/databases/v6/latest.json` | upstream listing (see source modes) |
+| `GRYPE_DB_SOURCE_AUTH` | — | `0` | `1` = send Artifactory auth on the source fetch (mode B) |
 | `GRYPE_DB_SUBPATH` | — | `databases/v6` | path inside the repo |
 | `DRY_RUN` | — | `0` | `1` = download + verify, no upload |
+
+### Source modes
+
+- **Mode A — direct from anchore (default):** the agent fetches `grype.anchore.io`
+  through the egress proxy and pushes to the local repo. Requires the **agent** to
+  have egress (via `EGRESS_PROXY`).
+- **Mode B — promote from a remote repo:** point `GRYPE_DB_SOURCE_URL` at your
+  Artifactory **remote** repo (e.g. `.../grype-db-remote/v6/latest.json`) and set
+  `GRYPE_DB_SOURCE_AUTH=1`. The agent then does a purely-internal
+  Artifactory→Artifactory promotion (remote → local) and **never egresses** — only
+  Artifactory reaches the internet. Use this when build agents are fully air-gapped.
 
 Requires `curl`, `jq`, and `sha256sum`/`shasum` on the runner.
 
