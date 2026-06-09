@@ -1,0 +1,32 @@
+# Nightly Grype DB → Artifactory sync (GitLab CI).
+#
+# Setup:
+#   1. Project → Settings → CI/CD → Variables (mark secrets "Masked"):
+#        ARTIFACTORY_URL    e.g. https://artifactory.example.com
+#        ARTIFACTORY_REPO   e.g. grype-db-local
+#        ARTIFACTORY_USER   service account
+#        ARTIFACTORY_TOKEN  access token            (Masked)
+#      Optional:
+#        EGRESS_PROXY       e.g. http://squid.example.com:3128   (forward proxy)
+#        NO_PROXY           e.g. .example.com,artifactory.example.com
+#        GRYPE_DB_SOURCE_URL, GRYPE_DB_SUBPATH
+#   2. Project → CI/CD → Schedules → New schedule, nightly cron (e.g. 15 6 * * *).
+#
+# IMPORTANT: set the proxy as EGRESS_PROXY (NOT HTTPS_PROXY) so it is exported
+# only inside the job — a global HTTPS_PROXY would route the runner's internal
+# git clone through the proxy and break it.
+
+stages: [sync]
+
+sync-grype-db:
+  stage: sync
+  image: alpine:3.21
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'      # allow manual "Run pipeline"
+  before_script:
+    # Runs AFTER the repo checkout, so exporting the proxy here is safe.
+    - export HTTPS_PROXY="${EGRESS_PROXY:-}" HTTP_PROXY="${EGRESS_PROXY:-}" NO_PROXY="${NO_PROXY:-}"
+    - apk add --no-cache bash curl jq coreutils
+  script:
+    - bash scripts/sync-grype-db.sh

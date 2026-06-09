@@ -1,0 +1,64 @@
+---
+# Nightly Grype DB → Artifactory sync (Bamboo Specs, YAML, version 2).
+#
+# Place this file at bamboo-specs/bamboo.yml in the repo root and link the repo
+# to Bamboo (Project → Bamboo Specs repository) so the plan is created/updated
+# automatically.
+#
+# Configure these as Bamboo PLAN VARIABLES (Plan → Variables); mark the token
+# as a secret so it is masked in logs:
+#     ARTIFACTORY_USER, ARTIFACTORY_TOKEN (secret),
+#   and override the defaults below per environment as needed.
+version: 2
+
+plan:
+  project-key: SEC            # an existing Bamboo project key
+  key: GRYPEDB
+  name: Grype DB Artifactory Sync
+  description: Mirror the Grype v6 vulnerability DB into Artifactory nightly.
+
+stages:
+  - Sync:
+      jobs:
+        - Sync DB
+
+Sync DB:
+  tasks:
+    - checkout
+    - script:
+        interpreter: /bin/bash
+        scripts:
+          - |
+            set -eu
+            export ARTIFACTORY_URL="${bamboo.ARTIFACTORY_URL}"
+            export ARTIFACTORY_REPO="${bamboo.ARTIFACTORY_REPO}"
+            export ARTIFACTORY_USER="${bamboo.ARTIFACTORY_USER}"
+            export ARTIFACTORY_TOKEN="${bamboo.ARTIFACTORY_TOKEN}"
+            export GRYPE_DB_SOURCE_URL="${bamboo.GRYPE_DB_SOURCE_URL}"
+            export GRYPE_DB_SUBPATH="${bamboo.GRYPE_DB_SUBPATH}"
+            # Forward proxy for the anchore.io egress (empty = direct).
+            export HTTPS_PROXY="${bamboo.EGRESS_PROXY}"
+            export HTTP_PROXY="${bamboo.EGRESS_PROXY}"
+            export NO_PROXY="${bamboo.NO_PROXY}"
+            bash scripts/sync-grype-db.sh
+
+# Quartz cron: seconds minutes hours day-of-month month day-of-week.
+# 03:00 every day. (Quartz requires '?' in one of day-of-month/day-of-week.)
+triggers:
+  - cron: 0 0 3 ? * *
+
+# Non-secret defaults — override per environment in the Bamboo UI.
+# Define ARTIFACTORY_USER and ARTIFACTORY_TOKEN (secret) as plan variables too.
+variables:
+  ARTIFACTORY_URL: https://artifactory.example.com
+  ARTIFACTORY_REPO: grype-db-local
+  GRYPE_DB_SOURCE_URL: https://grype.anchore.io/databases/v6/latest.json
+  GRYPE_DB_SUBPATH: databases/v6
+  EGRESS_PROXY: ""
+  NO_PROXY: ""
+
+labels:
+  - security
+  - grype
+
+notifications: []
