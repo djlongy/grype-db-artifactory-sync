@@ -43,14 +43,40 @@ The `databases/v6/` layout is preserved so the relative `path` inside
 
 ### Source modes
 
-- **Mode A — direct from anchore (default):** the agent fetches `grype.anchore.io`
-  through the egress proxy and pushes to the local repo. Requires the **agent** to
-  have egress (via `EGRESS_PROXY`).
-- **Mode B — promote from a remote repo:** point `GRYPE_DB_SOURCE_URL` at your
-  Artifactory **remote** repo (e.g. `.../grype-db-remote/v6/latest.json`) and set
-  `GRYPE_DB_SOURCE_AUTH=1`. The agent then does a purely-internal
-  Artifactory→Artifactory promotion (remote → local) and **never egresses** — only
-  Artifactory reaches the internet. Use this when build agents are fully air-gapped.
+There are two ways the job can obtain the DB. Pick one; both push to the same
+local repo. In the examples below, replace only the values marked `← replace`;
+everything else (including `/artifactory`, the repo names, and `/v6/latest.json`)
+is literal — type it exactly.
+
+**Mode A — direct from anchore (default).** The agent fetches the public anchore
+CDN through the egress proxy. Requires the *agent* to have egress (`EGRESS_PROXY`).
+
+```bash
+ARTIFACTORY_URL=https://artifactory.example.com   # ← replace (your Artifactory)
+ARTIFACTORY_REPO=grype-db-local
+ARTIFACTORY_USER=svc-grype                         # ← replace
+ARTIFACTORY_TOKEN=your-artifactory-token           # ← replace
+# GRYPE_DB_SOURCE_URL and GRYPE_DB_SOURCE_AUTH are left at their defaults.
+```
+
+**Mode B — promote from a remote repo.** The agent pulls the DB from your
+Artifactory *remote* repo (the one that proxies anchore) and re-publishes it to the
+*local* repo — entirely inside Artifactory. The **agent never reaches the
+internet**; only Artifactory does. Use this when build agents are fully air-gapped.
+
+```bash
+ARTIFACTORY_URL=https://artifactory.example.com    # ← replace (your Artifactory)
+ARTIFACTORY_REPO=grype-db-local                     # the LOCAL repo to publish into
+ARTIFACTORY_USER=svc-grype                          # ← replace
+ARTIFACTORY_TOKEN=your-artifactory-token            # ← replace
+GRYPE_DB_SOURCE_URL=https://artifactory.example.com/artifactory/grype-db-remote/v6/latest.json   # ← replace HOST only
+GRYPE_DB_SOURCE_AUTH=1                               # log in to the source with the creds above
+```
+
+In `GRYPE_DB_SOURCE_URL`, only the hostname is yours; `/artifactory`,
+`/grype-db-remote` (your remote repo name), and `/v6/latest.json` are literal.
+`GRYPE_DB_SOURCE_AUTH=1` makes the job send `ARTIFACTORY_USER`/`ARTIFACTORY_TOKEN`
+on that fetch — do **not** put credentials in the URL.
 
 Requires `curl`, `jq`, and `sha256sum`/`shasum` on the runner.
 
@@ -73,13 +99,20 @@ make sync                 # real run: publish to Artifactory
 
 ## Consuming the mirror (Grype client)
 
-Point Grype at the Artifactory repo — note the base ends at `…/<repo>/databases`
-(Grype appends `/v6/latest.json` itself):
+This runs wherever you scan (CI job, laptop, scanner host) — it is **not** part of
+the sync. Point Grype at the **local** repo. Note the URL ends at `/databases`
+(Grype appends `/v6/latest.json` itself — do not add it here):
 
 ```bash
-export GRYPE_DB_UPDATE_URL="https://<user>:<token>@artifactory.example.com/artifactory/grype-db-local/databases"
-grype <image>            # pulls the DB from Artifactory, no internet needed
+export GRYPE_DB_UPDATE_URL="https://svc-grype:your-artifactory-token@artifactory.example.com/artifactory/grype-db-local/databases"
+export GRYPE_DB_AUTO_UPDATE=false     # scan time: use the cached DB, never phone home
+grype your-image:tag                  # or:  grype dir:/path   |   grype sbom:./sbom.json
 ```
 
-For fully offline scans, pre-populate the DB cache and set
-`GRYPE_DB_AUTO_UPDATE=false`.
+Replace `svc-grype`, `your-artifactory-token`, and the hostname. Everything else —
+`/artifactory`, `grype-db-local`, `/databases` — is literal.
+
+| URL | Ends in | Used by |
+|---|---|---|
+| `GRYPE_DB_SOURCE_URL` (Mode B) | `/grype-db-remote/v6/latest.json` | the **sync job** |
+| `GRYPE_DB_UPDATE_URL` (client) | `/grype-db-local/databases` | the **scanner** |
