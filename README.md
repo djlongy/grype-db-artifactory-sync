@@ -26,6 +26,79 @@ grype.anchore.io ──(via forward proxy)──▶ this job ──(upload)─�
 The `databases/v6/` layout is preserved so the relative `path` inside
 `latest.json` resolves correctly on the client side.
 
+## Set up the Artifactory repositories (one-time)
+
+Do this once in the JFrog UI before editing `.env`. You need the **local** repo
+always; the **remote** repo only if you want Mode B (agents that never egress).
+
+Throughout, replace `artifactory.example.com` with your JFrog hostname. The repo
+keys (`grype-db-local`, `grype-db-remote`) are names *you* choose — if you change
+them, use the same names in `.env`.
+
+### Step 1 — Local repo (required): where the DB is published
+
+1. Log in to JFrog as an admin.
+2. Go to **Administration** (the gear / "admin" switch) → **Repositories**.
+3. Click **Create a Repository** → choose **Local**.
+4. Pick package type **Generic**.
+5. **Repository Key:** type `grype-db-local`.
+6. Click **Create Local Repository**.
+
+→ In `.env`: `ARTIFACTORY_REPO=grype-db-local`
+
+This is also the repo your **scanners** read from:
+`GRYPE_DB_UPDATE_URL=https://USER:TOKEN@artifactory.example.com/artifactory/grype-db-local/databases`
+
+### Step 2 — Remote repo (Mode B only): proxies anchore so agents don't egress
+
+Skip this if you're using Mode A (agents fetch anchore directly via a proxy).
+
+1. **Administration** → **Repositories** → **Create a Repository** → choose **Remote**.
+2. Pick package type **Generic**.
+3. **Repository Key:** type `grype-db-remote`.
+4. **URL:** type exactly `https://grype.anchore.io/databases`
+   (no `/v6`, no `/latest.json` — just `/databases`).
+5. If your Artifactory reaches the internet through a forward proxy (Squid /
+   enterprise), open the **Advanced** tab and set **Proxy** to that proxy (create it
+   first — see Step 3). If Artifactory has direct internet, leave Proxy blank.
+6. Click **Create Remote Repository**.
+7. **Ignore a failing "Test" button.** Test does a GET on the bare
+   `https://grype.anchore.io/databases` directory, which anchore returns 403/404 for
+   even when everything is correct. It is not a real check — verify with Step 4 instead.
+
+→ In `.env`:
+`GRYPE_DB_SOURCE_URL=https://artifactory.example.com/artifactory/grype-db-remote/v6/latest.json`
+(here `/v6/latest.json` **is** included — that's the object path, not the repo URL).
+
+### Step 3 — Forward proxy entry (only if Artifactory egresses via a proxy)
+
+Needed only if you set a Proxy in Step 2.5.
+
+1. **Administration** → **Proxies** → **New Proxy**.
+2. **Proxy Key:** `squid` (any name). **Host:** your proxy IP/host. **Port:** e.g. `3128`.
+3. **Save.** Then go back to the remote repo's Advanced tab and select this proxy.
+
+### Step 4 — Verify (the real test)
+
+Fetch an actual object, not the directory. From any host that can reach Artifactory:
+
+```bash
+curl -u USER:TOKEN https://artifactory.example.com/artifactory/grype-db-remote/v6/latest.json
+```
+
+A small JSON blob (with `"schemaVersion"` and a `"path"`) = working. A 404 means the
+repo key or URL is wrong; a 401 means bad credentials.
+
+### Field → `.env` cheat-sheet
+
+| JFrog UI you entered | `.env` variable |
+|---|---|
+| your JFrog hostname | inside `ARTIFACTORY_URL=https://...` |
+| Local repo key `grype-db-local` | `ARTIFACTORY_REPO=grype-db-local` |
+| Remote repo key `grype-db-remote` | the repo segment of `GRYPE_DB_SOURCE_URL` |
+| Remote URL `https://grype.anchore.io/databases` | (fixed — nothing to copy) |
+| an Artifactory user + access token | `ARTIFACTORY_USER` + `ARTIFACTORY_TOKEN` |
+
 ## Configuration (environment variables)
 
 | Variable | Required | Default | Notes |
