@@ -23,7 +23,9 @@ grype.anchore.io ──(via forward proxy)──▶ this job ──(upload)─�
 4. Upload the archive, then upload `latest.json` **last** (so clients never see a
    pointer to a missing file).
 
-The `databases/v6/` layout is preserved so the relative `path` inside
+The source URL's path layout (`databases/v6/`) is mirrored into the local repo,
+and the remote repo proxies anchore from its **root** — so local and remote
+repos share identical object paths, and the relative `path` inside
 `latest.json` resolves correctly on the client side.
 
 ## Set up the Artifactory repositories (one-time)
@@ -56,19 +58,22 @@ Skip this if you're using Mode A (agents fetch anchore directly via a proxy).
 1. **Administration** → **Repositories** → **Create a Repository** → choose **Remote**.
 2. Pick package type **Generic**.
 3. **Repository Key:** type `grype-db-remote`.
-4. **URL:** type exactly `https://grype.anchore.io/databases`
-   (no `/v6`, no `/latest.json` — just `/databases`).
+4. **URL:** type exactly `https://grype.anchore.io`
+   (the bare host — no `/databases`, no `/v6`. The remote repo mirrors anchore's
+   full path layout, so object paths are identical in the remote and local repos:
+   both serve `databases/v6/latest.json`).
 5. If your Artifactory reaches the internet through a forward proxy (Squid /
    enterprise), open the **Advanced** tab and set **Proxy** to that proxy (create it
    first — see Step 3). If Artifactory has direct internet, leave Proxy blank.
 6. Click **Create Remote Repository**.
 7. **Ignore a failing "Test" button.** Test does a GET on the bare
-   `https://grype.anchore.io/databases` directory, which anchore returns 403/404 for
+   `https://grype.anchore.io` root, which anchore returns 403/404 for
    even when everything is correct. It is not a real check — verify with Step 4 instead.
 
 → In `.env`:
-`GRYPE_DB_SOURCE_URL=https://artifactory.example.com/artifactory/grype-db-remote/v6/latest.json`
-(here `/v6/latest.json` **is** included — that's the object path, not the repo URL).
+`GRYPE_DB_SOURCE_URL=https://artifactory.example.com/artifactory/grype-db-remote/databases/v6/latest.json`
+(here `/databases/v6/latest.json` **is** included — that's the object path, not the
+repo URL, and it matches the local repo's layout exactly).
 
 ### Step 3 — Forward proxy entry (only if Artifactory egresses via a proxy)
 
@@ -83,7 +88,7 @@ Needed only if you set a Proxy in Step 2.5.
 Fetch an actual object, not the directory. From any host that can reach Artifactory:
 
 ```bash
-curl -u USER:TOKEN https://artifactory.example.com/artifactory/grype-db-remote/v6/latest.json
+curl -u USER:TOKEN https://artifactory.example.com/artifactory/grype-db-remote/databases/v6/latest.json
 ```
 
 A small JSON blob (with `"schemaVersion"` and a `"path"`) = working. A 404 means the
@@ -96,7 +101,7 @@ repo key or URL is wrong; a 401 means bad credentials.
 | your JFrog hostname | inside `ARTIFACTORY_URL=https://...` |
 | Local repo key `grype-db-local` | `ARTIFACTORY_REPO=grype-db-local` |
 | Remote repo key `grype-db-remote` | the repo segment of `GRYPE_DB_SOURCE_URL` |
-| Remote URL `https://grype.anchore.io/databases` | (fixed — nothing to copy) |
+| Remote URL `https://grype.anchore.io` | (fixed — nothing to copy) |
 | an Artifactory user + access token | `ARTIFACTORY_USER` + `ARTIFACTORY_TOKEN` |
 
 ## Configuration (environment variables)
@@ -111,15 +116,15 @@ repo key or URL is wrong; a 401 means bad credentials.
 | `NO_PROXY` | — | — | internal hosts that must bypass the proxy (Artifactory) |
 | `GRYPE_DB_SOURCE_URL` | — | `https://grype.anchore.io/databases/v6/latest.json` | upstream listing (see source modes) |
 | `GRYPE_DB_SOURCE_AUTH` | — | `auto` | `auto` / `true` / `false`. `auto` = authenticate the source fetch only when its host equals `ARTIFACTORY_URL`. Normally leave unset. |
-| `GRYPE_DB_SUBPATH` | — | *derived* | defaults to `databases/<version>` parsed from the source URL (e.g. `databases/v6`). Set only to force a non-standard layout. |
+| `GRYPE_DB_SUBPATH` | — | *derived* | defaults to **mirroring the source URL's path** (e.g. `databases/v6`), with any `artifactory/<repo>/` prefix stripped. Set only to force a non-standard layout. |
 | `DRY_RUN` | — | `0` | `1` = download + verify, no upload |
 
 ### Source modes
 
 There are two ways the job can obtain the DB. Pick one; both push to the same
 local repo. In the examples below, replace only the values marked `← replace`;
-everything else (including `/artifactory`, the repo names, and `/v6/latest.json`)
-is literal — type it exactly.
+everything else (including `/artifactory`, the repo names, and
+`/databases/v6/latest.json`) is literal — type it exactly.
 
 **Mode A — direct from anchore (default).** The agent fetches the public anchore
 CDN through the egress proxy. Requires the *agent* to have egress (`EGRESS_PROXY`).
@@ -142,15 +147,16 @@ ARTIFACTORY_URL=https://artifactory.example.com    # ← replace (your Artifacto
 ARTIFACTORY_REPO=grype-db-local                     # the LOCAL repo to publish into
 ARTIFACTORY_USER=svc-grype                          # ← replace
 ARTIFACTORY_TOKEN=your-artifactory-token            # ← replace
-GRYPE_DB_SOURCE_URL=https://artifactory.example.com/artifactory/grype-db-remote/v6/latest.json   # ← replace HOST only
+GRYPE_DB_SOURCE_URL=https://artifactory.example.com/artifactory/grype-db-remote/databases/v6/latest.json   # ← replace HOST only
 ```
 
 That's the whole Mode B config — no extra flags. In `GRYPE_DB_SOURCE_URL`, only the
 hostname is yours; `/artifactory`, `/grype-db-remote` (your remote repo name), and
-`/v6/latest.json` are literal. Because the source host equals `ARTIFACTORY_URL`, the
-job **automatically** logs in to the source with `ARTIFACTORY_USER`/`ARTIFACTORY_TOKEN`
+`/databases/v6/latest.json` are literal. Because the source host equals `ARTIFACTORY_URL`,
+the job **automatically** logs in to the source with `ARTIFACTORY_USER`/`ARTIFACTORY_TOKEN`
 (you don't put credentials in the URL, and you don't set any auth flag). The publish
-path is auto-derived as `databases/v6` from that URL.
+path mirrors the source object path — `databases/v6` — so the local and remote repos
+stay path-for-path identical.
 
 Requires `curl`, `jq`, and `sha256sum`/`shasum` on the runner.
 
@@ -188,5 +194,5 @@ Replace `svc-grype`, `your-artifactory-token`, and the hostname. Everything else
 
 | URL | Ends in | Used by |
 |---|---|---|
-| `GRYPE_DB_SOURCE_URL` (Mode B) | `/grype-db-remote/v6/latest.json` | the **sync job** |
+| `GRYPE_DB_SOURCE_URL` (Mode B) | `/grype-db-remote/databases/v6/latest.json` | the **sync job** |
 | `GRYPE_DB_UPDATE_URL` (client) | `/grype-db-local/databases` | the **scanner** |

@@ -53,7 +53,9 @@ variables:
   ARTIFACTORY_URL: https://artifactory.example.com
   ARTIFACTORY_REPO: grype-db-local
   GRYPE_DB_SOURCE_URL: https://grype.anchore.io/databases/v6/latest.json
-  GRYPE_DB_SUBPATH: databases/v6
+  # Empty = mirror the source URL's path (databases/v6). Override only for a
+  # non-standard layout.
+  GRYPE_DB_SUBPATH: ""
   EGRESS_PROXY: ""
   NO_PROXY: ""
 

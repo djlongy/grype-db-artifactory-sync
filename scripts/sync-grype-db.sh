@@ -23,9 +23,11 @@
 #   ARTIFACTORY_USER     required  upload user / service account
 #   ARTIFACTORY_TOKEN    required  password or access token (keep secret)
 #   GRYPE_DB_SOURCE_URL  optional  default https://grype.anchore.io/databases/v6/latest.json
-#   GRYPE_DB_SUBPATH     optional  where to publish inside the repo. By DEFAULT this is
-#                                  derived from the source URL as databases/<version>
-#                                  (e.g. databases/v6); it auto-follows to v7 when you
+#   GRYPE_DB_SUBPATH     optional  where to publish inside the repo. By DEFAULT this
+#                                  MIRRORS the source URL's path (e.g. databases/v6),
+#                                  stripping any artifactory/<repo>/ prefix when the
+#                                  source is an Artifactory repo — so local and remote
+#                                  object paths are identical. Auto-follows v7 when you
 #                                  point the source at .../v7/latest.json. Set this only
 #                                  to force a non-standard layout.
 #   GRYPE_DB_SOURCE_AUTH optional  one of: auto (default) | true | false. Controls
@@ -53,13 +55,19 @@ else echo "ERROR: need sha256sum or shasum" >&2; exit 3; fi
 : "${ARTIFACTORY_TOKEN:?set ARTIFACTORY_TOKEN}"
 SOURCE_URL="${GRYPE_DB_SOURCE_URL:-https://grype.anchore.io/databases/v6/latest.json}"
 
-# Default publish layout: databases/<version>, deriving <version> from the directory
-# that holds latest.json in the source URL (.../databases/v6/latest.json -> v6). This
-# auto-follows a future v7. Override only via GRYPE_DB_SUBPATH.
+# Default publish layout: MIRROR the source URL's path, so the local repo's object
+# paths match the source exactly (.../databases/v6/latest.json -> databases/v6).
+# When the source is an Artifactory repo (.../artifactory/<repo>/...), the
+# artifactory/<repo>/ prefix is stripped so the path relative to the repo root is
+# what gets mirrored — local and remote repos end up path-for-path identical.
+# This auto-follows a future v7. Override only via GRYPE_DB_SUBPATH.
 _src_noquery="${SOURCE_URL%%\?*}"   # strip any ?query
-_src_dir="${_src_noquery%/*}"       # strip /latest.json
-_db_version="${_src_dir##*/}"       # last path segment, e.g. v6
-SUBPATH="${GRYPE_DB_SUBPATH:-databases/${_db_version}}"
+_src_path="${_src_noquery#*://*/}"  # strip scheme://host/
+_src_path="${_src_path%/*}"         # strip /latest.json
+case "${_src_path}" in
+  artifactory/*/*) _src_path="${_src_path#artifactory/*/}" ;;  # strip artifactory/<repo>/
+esac
+SUBPATH="${GRYPE_DB_SUBPATH:-${_src_path}}"
 
 # Decide whether to authenticate the SOURCE fetch. Default "auto" = send Artifactory
 # creds only when the source host matches the destination Artifactory host (Mode B:
